@@ -1,0 +1,235 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
+const cron = require('node-cron');
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+
+const app = express();
+app.use((req, res, next) => {
+    res.setHeader('ngrok-skip-browser-warning', 'true');
+    next();
+});
+
+const server = http.createServer(app);
+const io = socketIo(server);
+const PORT = process.env.PORT || 3000;
+
+// ===== CARREGAR CONFIGURAÇÃO =====
+let config = {};
+try {
+    const configPath = path.join(__dirname, 'config-radio.json');
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    console.log('✅ config-radio.json carregado com sucesso');
+} catch (err) {
+    console.error('❌ Erro ao carregar config-radio.json:', err.message);
+    process.exit(1);
+}
+
+app.use(express.static('public'));
+
+// ===== PROXY PARA STREAMS =====
+app.get('/proxy-stream/:tipo', (req, res) => {
+    const tipo = req.params.tipo;
+    let streamUrl = '';
+
+    if (tipo === 'vozimaculado') {
+        streamUrl = config.streams.vozImaculado.url;
+    } else if (tipo === 'maraba') {
+        streamUrl = config.streams.maraba.url;
+    } else if (tipo === 'classica') {
+        streamUrl = config.streams.classica.url;
+    }
+
+    if (!streamUrl) {
+        return res.status(400).send('Stream inválido');
+    }
+
+    const https = require('https');
+    const httpModule = require('http');
+    const protocol = streamUrl.startsWith('https') ? https : httpModule;
+
+    protocol.get(streamUrl, (stream) => {
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        stream.pipe(res);
+    }).on('error', (err) => {
+        console.error('Erro no proxy:', err);
+        res.status(500).send('Erro no proxy');
+    });
+});
+
+// ===== PROXY PARA MENSAGENS (Google Drive) =====
+app.get('/proxy-mensagem/:fileId', (req, res) => {
+    const fileId = req.params.fileId;
+    const url = `https://drive.google.com/uc?export=download&id=${fileId}`;
+
+    console.log(`📥 Baixando mensagem: ${fileId}`);
+
+    axios({
+        method: 'get',
+        url: url,
+        responseType: 'stream',
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+    }).then(response => {
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        response.data.pipe(res);
+    }).catch(err => {
+        console.error('❌ Erro ao baixar mensagem:', err.message);
+        res.status(500).send('Erro ao baixar mensagem');
+    });
+});
+
+app.get('/', (req, res) => {
+    res.sendFile(__dirname + '/public/index.html');
+});
+
+// ===== WEBSOCKET =====
+let streamAtual = '';
+
+io.on('connection', (socket) => {
+    console.log('✅ Ouvinte conectado');
+    io.emit('ouvintes', { total: io.engine.clientsCount });
+
+    if (streamAtual) {
+        socket.emit('play-stream', streamAtual);
+    }
+
+    socket.on('disconnect', () => {
+        console.log('❌ Ouvinte desconectado');
+        io.emit('ouvintes', { total: io.engine.clientsCount });
+    });
+
+    // Receber aviso de silêncio detectado (60 segundos)
+    socket.on('silencio-detectado', () => {
+        console.log('🔇 Silêncio de 60s detectado — voltando à programação normal');
+        playStreamPorHorario();
+    });
+
+    // Receber aviso de mensagem terminada
+    socket.on('mensagem-terminou', () => {
+        console.log('✅ Mensagem terminou — voltando ao stream');
+        playStreamPorHorario();
+    });
+});
+
+// ===== TOCAR MENSAGEM ALEATÓRIA =====
+function tocarMensagemAleatoria() {
+    const listaMensagens = config.mensagens.googleDriveIds;
+
+    if (!listaMensagens || listaMensagens.length === 0) {
+        console.log('⚠️ Nenhuma mensagem disponível');
+        return;
+    }
+
+    const escolhida = listaMensagens[Math.floor(Math.random() * listaMensagens.length)];
+    console.log('🎙️ Tocando mensagem do Cônego Rafael');
+
+    const urlMensagem = `/proxy-mensagem/${escolhida}`;
+
+    io.emit('play-mensagem', {
+        arquivo: urlMensagem
+    });
+}
+
+// ===== HORÁRIOS FIXOS DAS MENSAGENS (DIA) =====
+config.mensagens.horariosDia.forEach(horario => {
+    const [hora, minuto] = horario.split(':');
+    cron.schedule(`${minuto} ${hora} * * *`, () => {
+        console.log(`📢 [${horario}] Mensagem programada`);
+        tocarMensagemAleatoria();
+    });
+});
+
+// ===== MENSAGENS A CADA 30 MIN NA MADRUGADA (01h-05h) =====
+cron.schedule('0,30 1-4 * * *', () => {
+    console.log('🌙 Mensagem da madrugada (a cada 30min)');
+    tocarMensagemAleatoria();
+});
+
+// ===== PROGRAMAÇÃO AUTOMÁTICA =====
+function playStreamPorHorario() {
+    const agora = new Date();
+    const hora = agora.getHours();
+    const minuto = agora.getMinutes();
+    const dia = ['domingo','segunda','terca','quarta','quinta','sexta','sabado'][agora.getDay()];
+
+    let url = '';
+    let descricao = '';
+    let detectarSilencio = false;
+
+    // Domingo 8h30-10h: Missa Marabá
+    if (dia === 'domingo' && ((hora === 8 && minuto >= 30) || (hora === 9))) {
+        url = config.streams.maraba.url;
+        descricao = '⛪ Santa Missa Dominical - Rádio Marabá';
+    }
+    // Sábado 12h50-13h05: Voz do Pastor
+    else if (dia === 'sabado' && ((hora === 12 && minuto >= 50) || (hora === 13 && minuto <= 5))) {
+        url = config.streams.maraba.url;
+        descricao = '📻 Voz do Pastor - Rádio Marabá';
+    }
+    // Sábado 19h-20h30: Missa ao vivo (com detecção de silêncio)
+    else if (dia === 'sabado' && ((hora === 19) || (hora === 20 && minuto <= 30))) {
+        url = config.streams.vozImaculado.url; // fallback até configurar transmissão
+        descricao = '⛪ Horário reservado - Missa ao Vivo (em breve)';
+        detectarSilencio = true;
+    }
+    // Madrugada 01h-05h: Música Clássica
+    else if (hora >= 1 && hora < 5) {
+        url = config.streams.classica.url;
+        descricao = '🎼 Madrugada Clássica Erudita';
+    }
+    // Restante: Voz do Coração Imaculado
+    else {
+        url = config.streams.vozImaculado.url;
+        descricao = '🎵 Rádio Voz do Coração Imaculado';
+    }
+
+    streamAtual = { url, descricao, detectarSilencio };
+    io.emit('play-stream', streamAtual);
+}
+
+// Verificar stream a cada minuto
+cron.schedule('* * * * *', playStreamPorHorario);
+
+// Iniciar ao ligar
+setTimeout(() => {
+    console.log('🎵 Iniciando programação automática...');
+    playStreamPorHorario();
+}, 2000);
+
+// ===== ROTAS DE TESTE =====
+app.get('/teste-mensagem', (req, res) => {
+    tocarMensagemAleatoria();
+    res.send('✅ Mensagem disparada');
+});
+
+server.listen(PORT, () => {
+    console.log(`
+╔════════════════════════════════════════════════════╗
+║  🎙️  WebRádio Paróquia NSA                       ║
+║  ✅ Servidor rodando na porta ${PORT}               ║
+║  ⏰ Mensagens: 10 horários + madrugada           ║
+║  🔇 Detecção de silêncio: 60s (Missa sábado)    ║
+╚════════════════════════════════════════════════════╝
+    `);
+});

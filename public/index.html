@@ -46,112 +46,104 @@
         }
 
         #status {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 15px;
             font-size: 18px;
-            font-weight: 600;
+            color: #333;
             margin: 30px 0;
-            min-height: 60px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            padding: 15px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 15px;
+            font-weight: 500;
         }
 
         .controls {
             display: flex;
-            gap: 20px;
+            gap: 15px;
             justify-content: center;
-            margin: 40px 0;
+            margin: 30px 0;
         }
 
         button {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
-            padding: 18px 40px;
-            font-size: 18px;
-            font-weight: 600;
+            padding: 15px 35px;
+            font-size: 16px;
             border-radius: 50px;
             cursor: pointer;
             transition: all 0.3s ease;
+            font-weight: 600;
             box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
         }
 
         button:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
         }
 
         button:active {
-            transform: translateY(-1px);
+            transform: translateY(0);
+        }
+
+        #ouvintes {
+            font-size: 16px;
+            color: #666;
+            margin-top: 20px;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 10px;
+            display: inline-block;
         }
 
         .info-box {
-            background: #f5f5f5;
+            background: #f9f9f9;
             border-left: 4px solid #667eea;
             padding: 20px;
+            margin-top: 30px;
             border-radius: 10px;
-            margin: 30px 0;
             text-align: left;
         }
 
         .info-box h3 {
             color: #667eea;
-            font-size: 16px;
             margin-bottom: 10px;
+            font-size: 18px;
         }
 
         .info-box p {
             color: #666;
+            line-height: 1.8;
             font-size: 14px;
-            line-height: 1.6;
-        }
-
-        #ouvintes {
-            color: #667eea;
-            font-size: 20px;
-            font-weight: 700;
-            margin: 20px 0;
         }
 
         .badge {
             display: inline-block;
-            background: #667eea;
+            background: #4caf50;
             color: white;
-            padding: 8px 16px;
+            padding: 8px 20px;
             border-radius: 20px;
             font-size: 12px;
             font-weight: 600;
-            margin-top: 15px;
+            margin-top: 20px;
         }
 
         .footer {
+            margin-top: 30px;
             color: #999;
             font-size: 12px;
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #eee;
         }
 
         @media (max-width: 600px) {
-            #player {
-                padding: 30px 20px;
-            }
-
             h1 {
                 font-size: 24px;
             }
 
-            .controls {
-                flex-direction: column;
-                gap: 15px;
+            button {
+                padding: 12px 25px;
+                font-size: 14px;
             }
 
-            button {
-                width: 100%;
+            #player {
+                padding: 30px 20px;
             }
         }
     </style>
@@ -173,9 +165,10 @@
         <div class="info-box">
             <h3>📻 Programação</h3>
             <p>
-                🌙 Madrugada (01h–05h): Música Clássica + Mensagens<br>
+                🌙 Madrugada (01h–05h): Música Clássica + Mensagens a cada 30min<br>
                 📢 Dia (05h–01h): Rádio Voz do Coração Imaculado<br>
-                ⛪ Domingo 8h30–10h: Santa Missa<br>
+                ⛪ Domingo 8h30–9h45: Santa Missa<br>
+                📻 Sábado 12h50–13h05: Voz do Pastor<br>
                 🔇 Detecção automática de silêncio ativa
             </p>
         </div>
@@ -206,7 +199,7 @@
         socket.on('play-stream', (data) => {
             audio.src = data.url;
             audio.play().catch(err => {
-                console.log('Aguardando interação do usuário para tocar');
+                console.log('Aguardando interação do usuário');
             });
             status.textContent = data.descricao;
             detectarSilencio = data.detectarSilencio || false;
