@@ -4,13 +4,19 @@
         name: webradio-paroquia
         env: node
         plan: starter
-        buildCommand: npm install
+        buildCommand: |
+          npm install
+          curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o /tmp/ffmpeg.tar.xz
+          tar -xf /tmp/ffmpeg.tar.xz -C /tmp
+          mv /tmp/ffmpeg-*/ffmpeg /usr/local/bin/ffmpeg
+          mv /tmp/ffmpeg-*/ffprobe /usr/local/bin/ffprobe
+          chmod +x /usr/local/bin/ffmpeg
+          chmod +x /usr/local/bin/ffprobe
         startCommand: node server.js
         envVars:
           - key: NODE_VERSION
             value: 20.x
         disk:
           name: ffmpeg-cache
-          mountPath: /usr/local/bin/ffmpeg
-          sizeGB: 1 # 1GB é suficiente para o ffmpeg
-        # A seção preBuild foi removida daqui
+          mountPath: /usr/local/bin/ffmpeg # Este disco não será mais usado para o binário, mas pode ser útil para cache.
+          sizeGB: 1
