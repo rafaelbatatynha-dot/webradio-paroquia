@@ -4,6 +4,7 @@ const socketIo = require('socket.io');
 const cron = require('node-cron');
 const axios = require('axios');
 const cors = require('cors');
+const http2 = require('http');
 
 const app = express();
 
@@ -55,7 +56,6 @@ let isPlayingMessage = false;
 let messageTimeout = null;
 
 // ===== LISTA COMPLETA DE MENSAGENS DO GOOGLE DRIVE =====
-// Obtida do script do Google Apps Script
 const mensagensCache = [
     { id: '1Z4ZZ_QhM82ivnbWg7c7zofCkGE6HuqJu', name: 'msg_010.mp3' },
     { id: '1v10QzlGw4gGsJgWgsI6Gx7u0YHGzAmZH', name: 'msg_009.mp3' },
@@ -144,57 +144,72 @@ const mensagensCache = [
     { id: '1S5ngs9bGc5smwNpaC1BxaaQ3wfGyvNfQ', name: 'Salmo 89.mp3' }
 ];
 
-// ===== CONFIGURAÇÃO DOS STREAMS DE RÁDIO =====
-const RADIO_STREAMS = {
-    'vozimaculado': 'http://r13.ciclano.io:9033/live',
-    'maraba': 'http://r13.ciclano.io:9033/live', // Usando o mesmo link para Marabá por enquanto
-    'classica': 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128', // Exemplo de rádio clássica
-    'ametista-fm': 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128' // Placeholder para Ametista FM
-};
-
-// ===== ROTA DE PROXY PARA STREAMS HTTP =====
-app.get('/proxy-stream/:radioId', async (req, res) => {
+// ===== PROXY ROBUSTO PARA ICECAST =====
+app.get('/proxy-stream/:radioId', (req, res) => {
     const radioId = req.params.radioId;
-    const streamUrl = RADIO_STREAMS[radioId];
 
-    if (!streamUrl) {
+    let streamUrl = '';
+
+    if (radioId === 'vozimaculado' || radioId === 'maraba') {
+        streamUrl = 'http://r13.ciclano.io:9033/live';
+    } else if (radioId === 'classica') {
+        streamUrl = 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128';
+    } else if (radioId === 'ametista-fm') {
+        streamUrl = 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128';
+    } else {
         return res.status(404).send('Stream não encontrado.');
     }
 
-    try {
-        const response = await axios({
-            method: 'get',
-            url: streamUrl,
-            responseType: 'stream'
-        });
+    console.log(`🔄 Proxy iniciado para: ${radioId} → ${streamUrl}`);
 
-        // Configura os cabeçalhos para o navegador entender que é um stream de áudio
-        res.setHeader('Content-Type', response.headers['content-type'] || 'audio/mpeg');
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
+    const axiosConfig = {
+        method: 'GET',
+        url: streamUrl,
+        responseType: 'stream',
+        timeout: 10000,
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive'
+        }
+    };
 
-        response.data.pipe(res); // Redireciona o stream de áudio para o cliente
+    axios(axiosConfig)
+        .then(response => {
+            console.log(`✅ Conexão estabelecida com ${radioId}`);
 
-        response.data.on('end', () => {
-            console.log(`Proxy para ${radioId} finalizado.`);
-        });
+            // Configurar headers de resposta
+            res.setHeader('Content-Type', response.headers['content-type'] || 'audio/mpeg');
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+            res.setHeader('Transfer-Encoding', 'chunked');
 
-        response.data.on('error', (err) => {
-            console.error(`Erro no proxy para ${radioId}:`, err.message);
+            // Pipar o stream
+            response.data.pipe(res);
+
+            response.data.on('error', (err) => {
+                console.error(`❌ Erro no stream ${radioId}:`, err.message);
+                if (!res.headersSent) {
+                    res.status(500).send('Erro ao retransmitir o stream.');
+                }
+            });
+
+            res.on('close', () => {
+                console.log(`🔌 Conexão fechada para ${radioId}`);
+                response.data.destroy();
+            });
+        })
+        .catch(error => {
+            console.error(`❌ Erro ao conectar com ${radioId}:`, error.message);
             if (!res.headersSent) {
-                res.status(500).send('Erro ao retransmitir o stream.');
+                res.status(500).send(`Erro: ${error.message}`);
             }
         });
-
-    } catch (error) {
-        console.error(`Erro ao iniciar proxy para ${radioId}:`, error.message);
-        if (!res.headersSent) {
-            res.status(500).send('Erro ao conectar com a fonte do stream.');
-        }
-    }
 });
-
 
 // ===== FUNÇÃO: Gerar URL segura para Google Drive =====
 function gerarUrlGoogleDrive(fileId) {
@@ -229,19 +244,16 @@ function tocarMensagem(mensagem, duracao) {
         nome: mensagem.name
     });
 
-    // Limpar timeout anterior se existir
     if (messageTimeout) clearTimeout(messageTimeout);
 
-    // Agendar retorno para a programação normal
     messageTimeout = setTimeout(() => {
         console.log(`⏹️ Mensagem finalizada, retornando para a programação normal`);
         isPlayingMessage = false;
-        playStreamPorHorario(); // Chama a função para retomar o stream principal
+        playStreamPorHorario();
     }, duracao * 1000);
 }
 
 // ===== AGENDAMENTOS DE MENSAGENS =====
-// Horários diários
 cron.schedule('0 10 * * *', () => { console.log('📢 [10h] Mensagem'); tocarMensagem(selecionarMensagemAleatoria(), 60); });
 cron.schedule('40 12 * * *', () => { console.log('📢 [12h40] Mensagem'); tocarMensagem(selecionarMensagemAleatoria(), 60); });
 cron.schedule('52 13 * * *', () => { console.log('📢 [13h52] Mensagem'); tocarMensagem(selecionarMensagemAleatoria(), 60); });
@@ -275,17 +287,17 @@ function playStreamPorHorario() {
 
     // Domingo 8h30-9h45: Missa Rádio Marabá
     if (dia === 'domingo' && ((hora === 8 && minuto >= 30) || (hora === 9 && minuto < 45))) {
-        url = '/proxy-stream/maraba'; // AGORA VIA PROXY
+        url = '/proxy-stream/maraba';
         descricao = '⛪ Santa Missa Dominical - Rádio Marabá';
     }
     // Sábado 12h50-13h05: Voz do Pastor (Marabá)
     else if (dia === 'sabado' && ((hora === 12 && minuto >= 50) || (hora === 13 && minuto <= 5))) {
-        url = '/proxy-stream/maraba'; // AGORA VIA PROXY
+        url = '/proxy-stream/maraba';
         descricao = '📻 Voz do Pastor - Rádio Marabá';
     }
-    // Sábado 19h00-20h30: Missa Rádio Ametista FM (aguardando link)
+    // Sábado 19h00-20h30: Missa Rádio Ametista FM
     else if (dia === 'sabado' && ((hora === 19 && minuto >= 0) || (hora === 20 && minuto < 30))) {
-        url = '/proxy-stream/ametista-fm'; // Placeholder - será atualizado com o link real
+        url = '/proxy-stream/ametista-fm';
         descricao = '🙏 Santa Missa de Sábado - Rádio Ametista FM';
     }
     // Música Clássica: 00h10-03h00
@@ -295,15 +307,14 @@ function playStreamPorHorario() {
     }
     // Restante do tempo: Rádio Voz do Coração Imaculado
     else {
-        url = '/proxy-stream/vozimaculado'; // AGORA VIA PROXY
+        url = '/proxy-stream/vozimaculado';
         descricao = '🎵 Rádio Voz do Coração Imaculado';
     }
 
-    // Só emite se o stream mudou
     if (currentPlayingStream.url !== url || currentPlayingStream.description !== descricao) {
         currentPlayingStream = { url, description: descricao };
         io.emit('play-stream', currentPlayingStream);
-        console.log(`▶️ Stream: ${descricao} (URL: ${url})`);
+        console.log(`▶️ Stream: ${descricao}`);
     }
 }
 
@@ -335,37 +346,5 @@ app.get('/teste-stream/:tipo', (req, res) => {
         url = '/proxy-stream/ametista-fm';
         descricao = 'Rádio Ametista FM';
     } else {
-        return res.status(400).send('Tipo inválido');
-    }
+        return res.status(400).send('Tipo
 
-    currentPlayingStream = { url, description: descricao };
-    io.emit('play-stream', currentPlayingStream);
-    res.send(`▶️ Testando: ${descricao}`);
-});
-
-app.get('/teste-mensagem', (req, res) => {
-    const msg = selecionarMensagemAleatoria();
-    if (msg) {
-        tocarMensagem(msg, 60);
-        res.send(`✅ Mensagem: ${msg.name}`);
-    } else {
-        res.send('⚠️ Nenhuma mensagem disponível');
-    }
-});
-
-server.listen(PORT, () => {
-    console.log(`
-╔════════════════════════════════════════════════════╗
-║  🎙️  WebRádio Paróquia NSA                       ║
-║  ✅ Servidor ativo na porta ${PORT}                 ║
-║  📂 Google Drive: ${GOOGLE_DRIVE_FOLDER_ID}        ║
-║  📊 Mensagens carregadas: ${mensagensCache.length}         ║
-║  🎵 Rádio Principal: Voz do Coração Imaculado    ║
-║  🎼 Clássica: 00h10-03h00 (msgs a cada 15min)   ║
-║  ⛪ Domingo: Missa Marabá 8h30-9h45             ║
-║  📻 Sábado: Voz do Pastor 12h50-13h05           ║
-║  🙏 Sábado: Missa Ametista 19h00-20h30          ║
-║  ⏰ Mensagens diárias: 10h, 12h40, 13h52...     ║
-╚════════════════════════════════════════════════════╝
-    `);
-});
