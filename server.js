@@ -144,21 +144,77 @@ const mensagensCache = [
     { id: '1S5ngs9bGc5smwNpaC1BxaaQ3wfGyvNfQ', name: 'Salmo 89.mp3' }
 ];
 
+// ===== CONFIGURAÇÃO DOS STREAMS DE RÁDIO =====
+const RADIO_STREAMS = {
+    'vozimaculado': 'http://r13.ciclano.io:9033/live',
+    'maraba': 'http://r13.ciclano.io:9033/live', // Usando o mesmo link para Marabá por enquanto
+    'classica': 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128', // Exemplo de rádio clássica
+    'ametista-fm': 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128' // Placeholder para Ametista FM
+};
+
+// ===== ROTA DE PROXY PARA STREAMS HTTP =====
+app.get('/proxy-stream/:radioId', async (req, res) => {
+    const radioId = req.params.radioId;
+    const streamUrl = RADIO_STREAMS[radioId];
+
+    if (!streamUrl) {
+        return res.status(404).send('Stream não encontrado.');
+    }
+
+    try {
+        const response = await axios({
+            method: 'get',
+            url: streamUrl,
+            responseType: 'stream'
+        });
+
+        // Configura os cabeçalhos para o navegador entender que é um stream de áudio
+        res.setHeader('Content-Type', response.headers['content-type'] || 'audio/mpeg');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+
+        response.data.pipe(res); // Redireciona o stream de áudio para o cliente
+
+        response.data.on('end', () => {
+            console.log(`Proxy para ${radioId} finalizado.`);
+        });
+
+        response.data.on('error', (err) => {
+            console.error(`Erro no proxy para ${radioId}:`, err.message);
+            if (!res.headersSent) {
+                res.status(500).send('Erro ao retransmitir o stream.');
+            }
+        });
+
+    } catch (error) {
+        console.error(`Erro ao iniciar proxy para ${radioId}:`, error.message);
+        if (!res.headersSent) {
+            res.status(500).send('Erro ao conectar com a fonte do stream.');
+        }
+    }
+});
+
+
+// ===== FUNÇÃO: Gerar URL segura para Google Drive =====
+function gerarUrlGoogleDrive(fileId) {
+    return `https://docs.google.com/uc?export=download&id=${fileId}`;
+}
+
 // ===== FUNÇÃO: Selecionar mensagem aleatória =====
 function selecionarMensagemAleatoria() {
-    if (mensagensCache.length === 0) return null;
-    return mensagensCache[Math.floor(Math.random() * mensagensCache.length)];
+    if (mensagensCache.length === 0) {
+        console.warn('⚠️ Nenhuma mensagem disponível no cache.');
+        return null;
+    }
+    const randomIndex = Math.floor(Math.random() * mensagensCache.length);
+    return mensagensCache[randomIndex];
 }
 
-// ===== FUNÇÃO: Gerar URL de download do Google Drive =====
-function gerarUrlGoogleDrive(fileId) {
-    return `https://drive.google.com/uc?export=download&id=${fileId}`;
-}
-
-// ===== FUNÇÃO: Tocar mensagem =====
-function tocarMensagem(mensagem, duracao = 60) {
+// ===== FUNÇÃO: Tocar mensagem e agendar retorno =====
+function tocarMensagem(mensagem, duracao) {
     if (!mensagem) {
-        console.log('⚠️ Nenhuma mensagem para tocar');
+        console.warn('⚠️ Tentativa de tocar mensagem nula.');
         return;
     }
 
@@ -180,7 +236,7 @@ function tocarMensagem(mensagem, duracao = 60) {
     messageTimeout = setTimeout(() => {
         console.log(`⏹️ Mensagem finalizada, retornando para a programação normal`);
         isPlayingMessage = false;
-        playStreamPorHorario();
+        playStreamPorHorario(); // Chama a função para retomar o stream principal
     }, duracao * 1000);
 }
 
@@ -219,12 +275,12 @@ function playStreamPorHorario() {
 
     // Domingo 8h30-9h45: Missa Rádio Marabá
     if (dia === 'domingo' && ((hora === 8 && minuto >= 30) || (hora === 9 && minuto < 45))) {
-        url = 'http://r13.ciclano.io:9033/live';
+        url = '/proxy-stream/maraba'; // AGORA VIA PROXY
         descricao = '⛪ Santa Missa Dominical - Rádio Marabá';
     }
     // Sábado 12h50-13h05: Voz do Pastor (Marabá)
     else if (dia === 'sabado' && ((hora === 12 && minuto >= 50) || (hora === 13 && minuto <= 5))) {
-        url = 'http://r13.ciclano.io:9033/live';
+        url = '/proxy-stream/maraba'; // AGORA VIA PROXY
         descricao = '📻 Voz do Pastor - Rádio Marabá';
     }
     // Sábado 19h00-20h30: Missa Rádio Ametista FM (aguardando link)
@@ -239,7 +295,7 @@ function playStreamPorHorario() {
     }
     // Restante do tempo: Rádio Voz do Coração Imaculado
     else {
-        url = 'http://r13.ciclano.io:9033/live';
+        url = '/proxy-stream/vozimaculado'; // AGORA VIA PROXY
         descricao = '🎵 Rádio Voz do Coração Imaculado';
     }
 
@@ -247,7 +303,7 @@ function playStreamPorHorario() {
     if (currentPlayingStream.url !== url || currentPlayingStream.description !== descricao) {
         currentPlayingStream = { url, description: descricao };
         io.emit('play-stream', currentPlayingStream);
-        console.log(`▶️ Stream: ${descricao}`);
+        console.log(`▶️ Stream: ${descricao} (URL: ${url})`);
     }
 }
 
@@ -267,10 +323,10 @@ app.get('/teste-stream/:tipo', (req, res) => {
     let descricao = '';
 
     if (tipo === 'maraba') {
-        url = 'http://r13.ciclano.io:9033/live';
+        url = '/proxy-stream/maraba';
         descricao = 'Rádio Marabá';
     } else if (tipo === 'vozimaculado') {
-        url = 'http://r13.ciclano.io:9033/live';
+        url = '/proxy-stream/vozimaculado';
         descricao = 'Rádio Voz do Coração Imaculado';
     } else if (tipo === 'classica') {
         url = '/proxy-stream/classica';
