@@ -2,8 +2,9 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cron = require('node-cron');
-const axios = require('axios');
+const axios = require('axios'); // Ainda útil para outras requisições, mas não para o proxy de stream
 const cors = require('cors');
+const httpProxy = require('http-proxy'); // Importa a nova biblioteca de proxy
 
 const app = express();
 
@@ -143,71 +144,44 @@ const mensagensCache = [
     { id: '1S5ngs9bGc5smwNpaC1BxaaQ3wfGyvNfQ', name: 'Salmo 89.mp3' }
 ];
 
-// ===== PROXY ROBUSTO PARA ICECAST =====
+// ===== CONFIGURAÇÃO DO PROXY HTTP =====
+const proxy = httpProxy.createProxyServer({});
+
+// Tratamento de erros do proxy
+proxy.on('error', function (err, req, res) {
+    console.error('❌ Erro no proxy:', err);
+    if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Erro ao conectar com o stream de rádio.');
+    }
+});
+
+// ===== ROTAS DE PROXY PARA STREAMS =====
 app.get('/proxy-stream/:radioId', (req, res) => {
     const radioId = req.params.radioId;
-
-    let streamUrl = '';
+    let targetUrl = '';
 
     if (radioId === 'vozimaculado' || radioId === 'maraba') {
-        streamUrl = 'http://r13.ciclano.io:9033/live';
+        targetUrl = 'http://r13.ciclano.io:9033/live';
     } else if (radioId === 'classica') {
-        streamUrl = 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128'; // Exemplo de stream de música clássica
+        targetUrl = 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128'; // Exemplo de stream de música clássica
     } else if (radioId === 'ametista-fm') {
-        streamUrl = 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128'; // Placeholder - será atualizado com o link real da Ametista FM
+        targetUrl = 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128'; // Placeholder - será atualizado com o link real
     } else {
-        return res.status(404).send('Stream não encontrado.');
+        return res.status(400).send('Tipo de rádio inválido para proxy.');
     }
 
-    console.log(`🔄 Proxy iniciado para: ${radioId} → ${streamUrl}`);
+    console.log(`🔄 Proxying request for ${radioId} to ${targetUrl}`);
 
-    const axiosConfig = {
-        method: 'GET',
-        url: streamUrl,
-        responseType: 'stream',
-        timeout: 10000,
+    // Configurações para o proxy
+    proxy.web(req, res, {
+        target: targetUrl,
+        changeOrigin: true, // Importante para alguns servidores Icecast
         headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': '*/*',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', // Simula um navegador
+            'Accept': 'audio/mpeg, audio/aac, audio/ogg, audio/*;q=0.9, application/ogg;q=0.7, video/*;q=0.6, */*;q=0.5'
         }
-    };
-
-    axios(axiosConfig)
-        .then(response => {
-            console.log(`✅ Conexão estabelecida com ${radioId}`);
-
-            // Configurar headers de resposta
-            res.setHeader('Content-Type', response.headers['content-type'] || 'audio/mpeg');
-            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-            res.setHeader('Pragma', 'no-cache');
-            res.setHeader('Expires', '0');
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-            res.setHeader('Transfer-Encoding', 'chunked');
-
-            // Pipar o stream
-            response.data.pipe(res);
-
-            response.data.on('error', (err) => {
-                console.error(`❌ Erro no stream ${radioId}:`, err.message);
-                if (!res.headersSent) {
-                    res.status(500).send('Erro ao retransmitir o stream.');
-                }
-            });
-
-            res.on('close', () => {
-                console.log(`🔌 Conexão fechada para ${radioId}`);
-                response.data.destroy();
-            });
-        })
-        .catch(error => {
-            console.error(`❌ Erro ao conectar com ${radioId}:`, error.message);
-            if (!res.headersSent) {
-                res.status(500).send(`Erro: ${error.message}`);
-            }
-        });
+    });
 });
 
 // ===== FUNÇÃO: Gerar URL segura para Google Drive =====
@@ -345,7 +319,7 @@ app.get('/teste-stream/:tipo', (req, res) => {
         url = '/proxy-stream/ametista-fm';
         descricao = 'Rádio Ametista FM';
     } else {
-        return res.status(400).send('Tipo inválido'); // <--- LINHA CORRIGIDA AQUI
+        return res.status(400).send('Tipo inválido');
     }
 
     currentPlayingStream = { url, description: descricao };
