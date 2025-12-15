@@ -4,7 +4,6 @@ const socketIo = require('socket.io');
 const cron = require('node-cron');
 const axios = require('axios');
 const cors = require('cors');
-const http2 = require('http');
 
 const app = express();
 
@@ -153,9 +152,9 @@ app.get('/proxy-stream/:radioId', (req, res) => {
     if (radioId === 'vozimaculado' || radioId === 'maraba') {
         streamUrl = 'http://r13.ciclano.io:9033/live';
     } else if (radioId === 'classica') {
-        streamUrl = 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128';
+        streamUrl = 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128'; // Exemplo de stream de música clássica
     } else if (radioId === 'ametista-fm') {
-        streamUrl = 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128';
+        streamUrl = 'http://stream.srg-ssr.ch/m/rsc_de/mp3_128'; // Placeholder - será atualizado com o link real da Ametista FM
     } else {
         return res.status(404).send('Stream não encontrado.');
     }
@@ -346,5 +345,37 @@ app.get('/teste-stream/:tipo', (req, res) => {
         url = '/proxy-stream/ametista-fm';
         descricao = 'Rádio Ametista FM';
     } else {
-        return res.status(400).send('Tipo
+        return res.status(400).send('Tipo inválido'); // <--- LINHA CORRIGIDA AQUI
+    }
 
+    currentPlayingStream = { url, description: descricao };
+    io.emit('play-stream', currentPlayingStream);
+    res.send(`▶️ Testando: ${descricao}`);
+});
+
+app.get('/teste-mensagem', (req, res) => {
+    const msg = selecionarMensagemAleatoria();
+    if (msg) {
+        tocarMensagem(msg, 60);
+        res.send(`✅ Mensagem: ${msg.name}`);
+    } else {
+        res.send('⚠️ Nenhuma mensagem disponível');
+    }
+});
+
+server.listen(PORT, () => {
+    console.log(`
+╔════════════════════════════════════════════════════╗
+║  🎙️  WebRádio Paróquia NSA                       ║
+║  ✅ Servidor ativo na porta ${PORT}                 ║
+║  📂 Google Drive: ${GOOGLE_DRIVE_FOLDER_ID}        ║
+║  📊 Mensagens carregadas: ${mensagensCache.length}         ║
+║  🎵 Rádio Principal: Voz do Coração Imaculado    ║
+║  🎼 Clássica: 00h10-03h00 (msgs a cada 15min)   ║
+║  ⛪ Domingo: Missa Marabá 8h30-9h45             ║
+║  📻 Sábado: Voz do Pastor 12h50-13h05           ║
+║  🙏 Sábado: Missa Ametista 19h00-20h30          ║
+║  ⏰ Mensagens diárias: 10h, 12h40, 13h52...     ║
+╚════════════════════════════════════════════════════╝
+    `);
+});
