@@ -13,7 +13,4 @@
           name: ffmpeg-cache
           mountPath: /usr/local/bin/ffmpeg
           sizeGB: 1 # 1GB é suficiente para o ffmpeg
-        preBuild:
-          - apt-get update -y
-          - apt-get install -y ffmpeg
-
+        # A seção preBuild foi removida daqui

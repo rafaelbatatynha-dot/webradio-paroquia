@@ -1,19 +1,20 @@
-{
-  "name": "webradio-paroquia",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "axios": "^1.13.2",
-    "cors": "^2.8.5",
-    "express": "^5.2.1",
-    "http-proxy": "^1.18.1",
-    "node-cron": "^4.2.1",
-    "socket.io": "^4.8.1"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  }
-}
+     {
+      "name": "webradio-paroquia",
+      "version": "1.0.0",
+      "main": "server.js",
+      "scripts": {
+        "start": "node server.js",
+        "postinstall": "apt-get update -y && apt-get install -y ffmpeg"
+      },
+      "dependencies": {
+        "axios": "^1.13.2",
+        "cors": "^2.8.5",
+        "express": "^5.2.1",
+        "http-proxy": "^1.18.1",
+        "node-cron": "^4.2.1",
+        "socket.io": "^4.8.1"
+      },
+      "engines": {
+        "node": ">=18.0.0"
+      }
+    }
