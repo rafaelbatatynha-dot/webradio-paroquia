@@ -1,18 +1,18 @@
-# render.yaml
-services:
-  - type: web
-    name: webradio-paroquia
-    env: node
-    plan: starter
-    buildCommand: npm install
-    startCommand: node server.js
-    envVars:
-      - key: NODE_VERSION
-        value: 20.x
-    disk:
-      name: ffmpeg-cache
-      mountPath: /usr/local/bin/ffmpeg
-      sizeGB: 1 # 1GB é suficiente para o ffmpeg
-    preBuild:
-      - apt-get update -y
-      - apt-get install -y ffmpeg
+    # render.yaml
+    services:
+      - type: web
+        name: webradio-paroquia
+        env: node
+        plan: starter
+        buildCommand: npm install
+        startCommand: node server.js
+        envVars:
+          - key: NODE_VERSION
+            value: 20.x
+        disk:
+          name: ffmpeg-cache
+          mountPath: /usr/local/bin/ffmpeg
+          sizeGB: 1 # 1GB é suficiente para o ffmpeg
+        preBuild:
+          - apt-get update -y
+          - apt-get install -y ffmpeg
