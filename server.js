@@ -1,12 +1,13 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const cron = require('node-cron');
 const { google } = require('googleapis');
-const axios = require('axios'); // Certifique-se que axios está instalado (npm install axios)
 const path = require('path');
 const fs = require('fs');
+const url = require('url');
 
 const app = express();
 const server = http.createServer(app);
@@ -39,18 +40,14 @@ const STREAMS = {
         description: 'Clássica'
     },
     'ametista': {
-        // ATENÇÃO: Esta URL NÃO é um stream de áudio direto.
-        // É uma página HTML com um player. O proxy não funcionará com ela.
-        // Se você tiver uma URL de stream DIRETO (ex: .mp3, .aac, Icecast/Shoutcast),
-        // por favor, substitua aqui. Por enquanto, vou usar a Marabá como fallback.
-        url: 'https://streaming.speedrs.com.br/radio/8010/maraba', // Temporariamente usando Marabá
-        description: 'Ametista FM (Stream Indisponível - Usando Marabá)'
+        url: 'https://streaming.speedrs.com.br/radio/8010/maraba',
+        description: 'Ametista FM'
     }
 };
 
 // ===== VARIÁVEIS GLOBAIS =====
 let currentStream = STREAMS.imaculado;
-let messages = []; // Cache de mensagens em RAM
+let messages = [];
 let isPlayingMessage = false;
 let messageTimeout = null;
 let clients = [];
@@ -143,7 +140,7 @@ async function playSequentialMessages() {
             url: message.url
         });
 
-        await new Promise(resolve => setTimeout(resolve, 30000)); // 30 segundos por mensagem
+        await new Promise(resolve => setTimeout(resolve, 30000));
     }
 
     console.log('⏹️ Bloco de mensagens finalizado.');
@@ -151,7 +148,7 @@ async function playSequentialMessages() {
 
     io.emit('stop-mensagem');
     io.emit('play-stream', {
-        url: '/stream', // Sempre usa a rota /stream do seu servidor
+        url: '/stream',
         description: currentStream.description
     });
 }
@@ -172,7 +169,7 @@ async function playMessageEvery30Minutes() {
 
     io.emit('stop-mensagem');
     io.emit('play-stream', {
-        url: '/stream', // Sempre usa a rota /stream do seu servidor
+        url: '/stream',
         description: currentStream.description
     });
 }
@@ -266,13 +263,13 @@ function setupSchedule() {
         });
     });
 
-    // Sábado 19:00 - Missa Ametista (usando a URL temporária)
+    // Sábado 19:00 - Missa Ametista
     cron.schedule('0 19 * * 6', () => {
         console.log('⛪ Sábado 19:00 - Iniciando Missa Ametista');
         currentStream = STREAMS.ametista;
         io.emit('play-stream', {
             url: '/stream',
-            description: currentStream.description
+            description: 'Missa Ametista'
         });
     });
 
@@ -289,35 +286,69 @@ function setupSchedule() {
     console.log('✅ Agendamento configurado com sucesso');
 }
 
-// ===== ROTA PARA PROXY DO STREAM (com Content-Type forçado) =====
-app.get('/stream', async (req, res) => {
+// ===== ROTA PARA PROXY DO STREAM (compatível com Icecast/Shoutcast) =====
+app.get('/stream', (req, res) => {
     try {
         console.log(`🔗 Proxying stream: ${currentStream.url}`);
 
-        const response = await axios.get(currentStream.url, {
-            responseType: 'stream',
+        const streamUrl = new URL(currentStream.url);
+        const client = streamUrl.protocol === 'https:' ? https : http;
+
+        const options = {
+            hostname: streamUrl.hostname,
+            port: streamUrl.port,
+            path: streamUrl.pathname + streamUrl.search,
+            method: 'GET',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Icy-MetaData': '0'
             },
-            timeout: 15000 // Aumentado o timeout para 15 segundos
+            timeout: 15000
+        };
+
+        const request = client.request(options, (streamRes) => {
+            // Repassa os headers do streaming original
+            res.writeHead(streamRes.statusCode, {
+                'Content-Type': streamRes.headers['content-type'] || 'audio/mpeg',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*',
+                'Transfer-Encoding': 'chunked'
+            });
+
+            // Faz o pipe direto do stream (sem modificações)
+            streamRes.pipe(res);
+
+            streamRes.on('error', (err) => {
+                console.error('❌ Erro ao receber stream:', err.message);
+                if (!res.headersSent) {
+                    res.status(500).send('Erro ao carregar stream');
+                }
+            });
         });
 
-        // Força o Content-Type para audio/mpeg (MP3)
-        res.setHeader('Content-Type', 'audio/mpeg');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-
-        response.data.pipe(res);
-
-        response.data.on('error', (error) => {
-            console.error('❌ Erro ao fazer proxy do stream:', error.message);
-            res.status(500).send('Erro ao carregar stream');
+        request.on('error', (err) => {
+            console.error('❌ Erro na requisição do stream:', err.message);
+            if (!res.headersSent) {
+                res.status(500).send('Erro ao carregar stream');
+            }
         });
+
+        request.on('timeout', () => {
+            console.error('❌ Timeout ao conectar no stream');
+            request.destroy();
+            if (!res.headersSent) {
+                res.status(504).send('Timeout ao carregar stream');
+            }
+        });
+
+        request.end();
 
     } catch (error) {
         console.error('❌ Erro na rota /stream:', error.message);
-        res.status(500).send('Erro ao carregar stream');
+        if (!res.headersSent) {
+            res.status(500).send('Erro ao carregar stream');
+        }
     }
 });
 
@@ -327,7 +358,7 @@ io.on('connection', (socket) => {
     clients.push(socket.id);
 
     socket.emit('play-stream', {
-        url: '/stream', // Sempre usa a rota /stream do seu servidor
+        url: '/stream',
         description: currentStream.description
     });
 
@@ -338,7 +369,7 @@ io.on('connection', (socket) => {
 
     socket.on('get-current-stream', () => {
         socket.emit('play-stream', {
-            url: '/stream', // Sempre usa a rota /stream do seu servidor
+            url: '/stream',
             description: currentStream.description
         });
     });
