@@ -1,22 +1,28 @@
-     # render.yaml
-    services:
-      - type: web
-        name: webradio-paroquia
-        env: node
-        plan: starter
-        buildCommand: |
-          npm install
-          curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o /tmp/ffmpeg.tar.xz
-          tar -xf /tmp/ffmpeg.tar.xz -C /tmp
-          mv /tmp/ffmpeg-*/ffmpeg /usr/local/bin/ffmpeg
-          mv /tmp/ffmpeg-*/ffprobe /usr/local/bin/ffprobe
-          chmod +x /usr/local/bin/ffmpeg
-          chmod +x /usr/local/bin/ffprobe
-        startCommand: node server.js
-        envVars:
-          - key: NODE_VERSION
-            value: 20.x
-        disk:
-          name: ffmpeg-cache
-          mountPath: /usr/local/bin/ffmpeg # Este disco não será mais usado para o binário, mas pode ser útil para cache.
-          sizeGB: 1
+# render.yaml
+services:
+  - type: web
+    name: webradio-paroquia
+    env: node
+    plan: starter
+    buildCommand: |
+      npm install
+      # Baixa e instala FFmpeg e FFprobe estáticos
+      mkdir -p /usr/local/bin
+      wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -O /tmp/ffmpeg.tar.xz
+      tar -xf /tmp/ffmpeg.tar.xz -C /tmp/
+      mv /tmp/ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ffmpeg
+      mv /tmp/ffmpeg-*-amd64-static/ffprobe /usr/local/bin/ffprobe
+      chmod +x /usr/local/bin/ffmpeg
+      chmod +x /usr/local/bin/ffprobe
+      echo "FFmpeg and FFprobe installed successfully."
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 20.x
+      # A variável GOOGLE_APPLICATION_CREDENTIALS_JSON DEVE ser configurada no painel do Render, não aqui.
+      # - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+      #   value: "SEU_JSON_AQUI" # NÃO COLOQUE AQUI DIRETAMENTE!
+    disk:
+      name: ffmpeg-cache
+      mountPath: /usr/local/bin/ffmpeg # Este disco não será mais usado para o binário, mas pode ser útil para cache.
+      sizeGB: 1
