@@ -67,6 +67,11 @@ let messageTimeout = null;
 let ffmpegProcess = null; // Variável para armazenar o processo FFmpeg do stream principal
 let ffprobeCache = {}; // Cache para armazenar a duração das mensagens
 
+// --- NOVAS VARIÁVEIS PARA O BLOCO DE MENSAGENS DAS 11H ---
+let isPlayingMessageBlock = false; // Indica se estamos no bloco de mensagens das 11h
+let currentMessageBlockIndex = 0; // Índice da mensagem atual no bloco
+// --- FIM NOVAS VARIÁVEIS ---
+
 // --- INÍCIO DO BLOCO DE CÓDIGO PARA GOOGLE DRIVE ---
 
 let googleDriveAuth;
@@ -191,244 +196,154 @@ function startFfmpegStream(sourceUrl, res, isMessage = false) {
     });
 
     currentFfmpegProcess.on('error', (err) => {
-        console.error(`❌ Failed to start FFmpeg process for ${isMessage ? 'message' : 'stream'}:`, err);
-        if (!res.headersSent) {
-            res.status(500).send(`Erro ao iniciar o stream de ${isMessage ? 'mensagem' : 'rádio'}.`);
-        }
+        console.error(`❌ Failed to start FFmpeg process for ${isMessage ? 'message' : 'stream'}: ${sourceUrl}`, err);
         if (!isMessage && currentFfmpegProcess === ffmpegProcess) {
             ffmpegProcess = null;
         }
     });
 }
 
-// Rota para o stream principal (rádios)
+// Rota para o stream principal (que o cliente vai acessar)
 app.get('/stream', (req, res) => {
-    res.set({
-        'Content-Type': 'audio/mpeg',
-        'Connection': 'keep-alive',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0'
-    });
-    startFfmpegStream(currentPlayingStream.url, res, false);
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Cache-Control', 'no-cache');
+
+    if (currentPlayingStream.url) {
+        startFfmpegStream(currentPlayingStream.url, res);
+    } else {
+        console.warn('⚠️ Nenhuma URL de stream principal definida. Enviando stream padrão.');
+        startFfmpegStream(RADIO_VOZ_IMACULADO_URL, res); // Fallback
+    }
 });
 
 // Rota para o stream de mensagens do Google Drive
 app.get('/message-stream/:id', (req, res) => {
     const messageId = req.params.id;
+    const message = messageFilesCache.find(m => m.id === messageId);
+
+    if (!message) {
+        console.error(`❌ Mensagem com ID ${messageId} não encontrada no cache.`);
+        return res.status(404).send('Mensagem não encontrada.');
+    }
+
     const googleDriveUrl = `https://docs.google.com/uc?export=download&id=${messageId}`;
-    res.set({
-        'Content-Type': 'audio/mpeg',
-        'Connection': 'keep-alive',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0'
-    });
-    startFfmpegStream(googleDriveUrl, res, true); // isMessage = true
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Cache-Control', 'no-cache');
+
+    startFfmpegStream(googleDriveUrl, res, true); // O 'true' indica que é uma mensagem
 });
 
 // Função para obter a duração de um arquivo de áudio usando ffprobe
-async function getAudioDuration(fileId) {
-    if (ffprobeCache[fileId]) {
-        return ffprobeCache[fileId];
+async function getAudioDuration(url) {
+    if (ffprobeCache[url]) {
+        return ffprobeCache[url];
     }
 
-    const googleDriveUrl = `https://docs.google.com/uc?export=download&id=${fileId}`;
-    console.log(`⏳ Obtendo duração para ${fileId} via ffprobe...`);
-
     return new Promise((resolve, reject) => {
-        const ffprobeProcess = spawn('ffprobe', [
+        const ffprobeArgs = [
             '-v', 'error',
             '-show_entries', 'format=duration',
             '-of', 'default=noprint_wrappers=1:nokey=1',
-            googleDriveUrl
-        ]);
+            url
+        ];
 
+        const ffprobeProcess = spawn('ffprobe', ffprobeArgs);
         let duration = '';
+        let error = '';
+
         ffprobeProcess.stdout.on('data', (data) => {
             duration += data.toString();
         });
 
+        ffprobeProcess.stderr.on('data', (data) => {
+            error += data.toString();
+        });
+
         ffprobeProcess.on('close', (code) => {
-            if (code === 0) {
+            if (code === 0 && duration) {
                 const parsedDuration = parseFloat(duration);
-                if (!isNaN(parsedDuration)) {
-                    ffprobeCache[fileId] = parsedDuration;
-                    resolve(parsedDuration);
-                } else {
-                    console.error(`❌ ffprobe retornou duração inválida para ${fileId}: ${duration}`);
-                    resolve(60); // Duração padrão de 60 segundos em caso de erro
-                }
+                ffprobeCache[url] = parsedDuration;
+                resolve(parsedDuration);
             } else {
-                console.error(`❌ ffprobe process exited with code ${code} for ${fileId}`);
-                resolve(60); // Duração padrão de 60 segundos em caso de erro
+                console.error(`❌ Erro ao obter duração de ${url}: ${error}`);
+                reject(new Error(`FFprobe failed: ${error}`));
             }
         });
 
         ffprobeProcess.on('error', (err) => {
-            console.error(`❌ Failed to start ffprobe process for ${fileId}:`, err);
-            resolve(60); // Duração padrão de 60 segundos em caso de erro
+            console.error(`❌ Falha ao iniciar ffprobe para ${url}:`, err);
+            reject(err);
         });
     });
 }
 
-let currentMessage = null; // Mensagem atualmente em reprodução
-let messageSequenceTimeout = null; // Timeout para a próxima mensagem na sequência
-
-// Função para tocar uma mensagem (individual ou em sequência)
-async function playMessage(message, isSequence = false) {
-    if (!message || !message.id) {
-        console.error('❌ Tentativa de tocar mensagem inválida.');
+// Função para tocar uma mensagem
+async function playMessage(message, isBlockMessage = false) {
+    if (isPlayingMessage) {
+        console.log('⚠️ Já há uma mensagem tocando. Ignorando nova solicitação.');
         return;
     }
-    if (isPlayingMessage && !isSequence) { // Se já está tocando uma mensagem e não é parte de uma sequência
-        console.log(`⚠️ Mensagem ${currentMessage?.name} já está tocando. Ignorando nova solicitação.`);
+    if (messageFilesCache.length === 0) {
+        console.warn('Não há mensagens carregadas para tocar.');
         return;
     }
 
     isPlayingMessage = true;
-    currentMessage = message;
-    console.log(`📢 Iniciando mensagem: ${message.name}`);
-
-    // Envia o comando para o cliente tocar a mensagem
+    console.log(`🔊 Tocando mensagem: ${message.name}`);
     io.emit('play-mensagem', {
         name: message.name,
-        url: `/message-stream/${message.id}` // Usa a nova rota de proxy
+        url: `/message-stream/${message.id}`
     });
 
-    const duration = await getAudioDuration(message.id);
-    console.log(`⏳ Mensagem ${message.name} tem duração de ${duration.toFixed(2)} segundos.`);
+    try {
+        const duration = await getAudioDuration(message.url);
+        console.log(`⏳ Duração da mensagem ${message.name}: ${duration} segundos.`);
 
-    // Limpa qualquer timeout anterior para evitar conflitos
-    if (messageTimeout) {
-        clearTimeout(messageTimeout);
-    }
-
-    messageTimeout = setTimeout(() => {
-        console.log(`⏹️ Mensagem ${message.name} finalizada (timeout de ${duration}s).`);
-        isPlayingMessage = false;
-        currentMessage = null;
-        io.emit('stop-mensagem'); // Informa o cliente para parar a mensagem
-
-        if (isSequence) {
-            // Se for parte de uma sequência, agendamos a próxima mensagem
-            scheduleNextMessageInSequence();
-        } else {
-            // Se não for sequência, retorna ao stream principal
-            setMainStream();
+        if (messageTimeout) {
+            clearTimeout(messageTimeout);
         }
-    }, duration * 1000); // Converte segundos para milissegundos
-}
 
-// Variáveis para a sequência de mensagens das 11h
-let isPlayingMessageSequence = false;
-let currentMessageSequenceIndex = 0;
-let messageSequenceEndTimeout = null; // Timeout para finalizar a sequência às 12h
+        messageTimeout = setTimeout(() => {
+            isPlayingMessage = false;
+            console.log(`⏹️ Mensagem ${message.name} concluída.`);
+            if (!isBlockMessage) { // Se não for uma mensagem do bloco das 11h, retorna ao stream principal
+                setMainStream();
+            } else {
+                // Se for uma mensagem do bloco, o cronjob das 11h cuidará da próxima
+                console.log('Continuando no bloco de mensagens das 11h.');
+            }
+        }, duration * 1000); // Converte segundos para milissegundos
 
-// Função para agendar a próxima mensagem na sequência
-function scheduleNextMessageInSequence() {
-    if (!isPlayingMessageSequence) {
-        console.log('Sequência de mensagens finalizada ou interrompida.');
-        return;
-    }
-
-    if (messageFilesCache.length === 0) {
-        console.warn('Não há mensagens no cache para a sequência.');
-        stopMessageSequence();
-        return;
-    }
-
-    // Toca a próxima mensagem na ordem, ou volta para o início se chegou ao fim
-    const messageToPlay = messageFilesCache[currentMessageSequenceIndex];
-    currentMessageSequenceIndex = (currentMessageSequenceIndex + 1) % messageFilesCache.length;
-
-    playMessage(messageToPlay, true); // Passa 'true' para indicar que é parte de uma sequência
-}
-
-// Função para iniciar a sequência de mensagens das 11h
-function startMessageSequence() {
-    if (isPlayingMessageSequence) {
-        console.log('⚠️ Sequência de mensagens das 11h já está ativa.');
-        return;
-    }
-    if (messageFilesCache.length === 0) {
-        console.warn('Não há mensagens carregadas para iniciar a sequência das 11h.');
-        return;
-    }
-
-    console.log('🚀 Iniciando sequência de mensagens do Google Drive (11h00-12h00).');
-    isPlayingMessageSequence = true;
-    currentMessageSequenceIndex = 0; // Começa do início da lista
-
-    // Define o stream principal como "Mensagens do Google Drive"
-    currentPlayingStream = {
-        url: '/message-stream', // Uma URL simbólica, pois o cliente vai tocar via 'play-mensagem'
-        description: 'Mensagens do Google Drive'
-    };
-    io.emit('play-stream', currentPlayingStream); // Notifica o cliente para mudar a descrição
-
-    scheduleNextMessageInSequence(); // Inicia a primeira mensagem
-
-    // Agenda o fim da sequência para 12h00
-    const now = new Date();
-    const msUntil12h = (12 * 60 * 60 * 1000) - (now.getHours() * 60 * 60 * 1000 + now.getMinutes() * 60 * 1000 + now.getSeconds() * 1000 + now.getMilliseconds());
-
-    if (msUntil12h > 0) {
-        messageSequenceEndTimeout = setTimeout(stopMessageSequence, msUntil12h);
-        console.log(`⏰ Sequência de mensagens agendada para terminar em ${msUntil12h / 1000 / 60} minutos.`);
-    } else {
-        // Se já passou das 12h (por algum motivo), para imediatamente
-        stopMessageSequence();
+    } catch (error) {
+        console.error(`❌ Erro ao obter duração ou tocar mensagem ${message.name}:`, error);
+        isPlayingMessage = false;
+        if (!isBlockMessage) {
+            setMainStream(); // Tenta retornar ao stream principal mesmo com erro
+        }
     }
 }
 
-// Função para parar a sequência de mensagens
-function stopMessageSequence() {
-    if (!isPlayingMessageSequence) return;
-
-    console.log('🛑 Finalizando sequência de mensagens do Google Drive (12h00).');
-    isPlayingMessageSequence = false;
-    if (messageSequenceEndTimeout) {
-        clearTimeout(messageSequenceEndTimeout);
-        messageSequenceEndTimeout = null;
-    }
-    if (messageTimeout) { // Garante que a mensagem atual pare
-        clearTimeout(messageTimeout);
-        messageTimeout = null;
-    }
-    isPlayingMessage = false; // Garante que o estado de "tocando mensagem" seja resetado
-    currentMessage = null;
-    io.emit('stop-mensagem'); // Informa o cliente para parar a mensagem
-    setMainStream(); // Retorna ao stream principal
-}
-
-
-// Função para definir o stream principal com base na programação
+// Função para definir o stream principal com base no horário
 function setMainStream() {
-    // Se a sequência de mensagens das 11h estiver ativa, não muda o stream principal
-    if (isPlayingMessageSequence) {
-        console.log('⚠️ Não alterando stream principal, sequência de mensagens das 11h está tocando.');
-        return;
-    }
-    if (isPlayingMessage) {
-        console.log('⚠️ Não alterando stream principal, mensagem individual está tocando.');
-        return;
-    }
-
     const now = new Date();
     const day = now.getDay(); // 0 = Domingo, 1 = Segunda, ..., 6 = Sábado
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
-    const currentTimeInMinutes = hours * 60 + minutes;
-
+    const currentTimeInMinutes = now.getHours() * 60 + now.getMinutes();
     let newStream = {
         url: RADIO_VOZ_IMACULADO_URL,
         description: 'Voz do Coração Imaculado'
-    };
+    }; // Stream padrão
 
-    // ===== PROGRAMAÇÃO ESPECIAL =====
-    // Domingo: Rádio Marabá (Missa) 8h30-9h45
-    if (day === 0 && currentTimeInMinutes >= (8 * 60 + 30) && currentTimeInMinutes < (9 * 60 + 45)) {
+    // Se estiver no bloco de mensagens das 11h, não altera o stream principal
+    if (isPlayingMessageBlock) {
+        newStream = {
+            url: '/message-stream', // URL simbólica para indicar que está tocando mensagens
+            description: 'Mensagens do Google Drive'
+        };
+    }
+    // Domingo: Missa Rádio Marabá 8h30-9h45
+    else if (day === 0 && currentTimeInMinutes >= (8 * 60 + 30) && currentTimeInMinutes < (9 * 60 + 45)) {
         newStream = {
             url: RADIO_MARABA_URL,
             description: 'Rádio Marabá (Missa)'
@@ -444,7 +359,7 @@ function setMainStream() {
     // Sábado: Programa específico do sábado 12h50-13h05
     else if (day === 6 && currentTimeInMinutes >= (12 * 60 + 50) && currentTimeInMinutes < (13 * 60 + 5)) {
         newStream = {
-            url: RADIO_VOZ_IMACULADO_URL,
+            url: RADIO_VOZ_IMACULADO_URL, // Assumindo que o programa é na Voz do Imaculado
             description: 'Voz do Coração Imaculado (Programa de Sábado)'
         };
     }
@@ -453,15 +368,6 @@ function setMainStream() {
         newStream = {
             url: RADIO_CLASSICA_URL,
             description: 'Swiss Classic Radio (Madrugada Clássica)'
-        };
-    }
-    // Horário das 11h00-12h00: Mensagens do Google Drive (NOVO BLOCO DE PROGRAMAÇÃO!)
-    else if (currentTimeInMinutes >= (11 * 60) && currentTimeInMinutes < (12 * 60)) {
-        // A lógica de startMessageSequence() já cuida da reprodução e do estado
-        // Aqui, apenas garantimos que o currentPlayingStream reflita isso
-        newStream = {
-            url: '/message-stream', // URL simbólica
-            description: 'Mensagens do Google Drive'
         };
     }
     // A partir das 05:00, retorna à Voz da Imaculada (se não houver outra programação)
@@ -506,7 +412,7 @@ dailyMessageTimes.forEach(time => {
         const hours = now.getHours();
         // Não toca mensagens diárias se estiver na Madrugada Clássica (00h00 a 04h59)
         // OU se estiver no bloco de mensagens das 11h-12h
-        if (!(hours >= 0 && hours < 5) && !(hours === 11)) { // Ajustado para 00h00 a 04h59 E fora das 11h
+        if (!(hours >= 0 && hours < 5) && !(hours === 11)) {
             if (messageFilesCache.length > 0) {
                 const randomMessage = messageFilesCache[Math.floor(Math.random() * messageFilesCache.length)];
                 playMessage(randomMessage);
@@ -533,10 +439,47 @@ cron.schedule('10,40 0-4 * * *', () => { // Aos 10 e 40 minutos das horas 0, 1, 
     }
 });
 
-// ===== NOVO AGENDAMENTO: SEQUÊNCIA DE MENSAGENS DAS 11H00 ÀS 12H00 =====
-cron.schedule('0 11 * * *', () => { // Todos os dias, às 11h00
-    startMessageSequence();
+// --- NOVO AGENDAMENTO: Bloco de Mensagens das 11h00 às 12h00 ---
+cron.schedule('* 11 * * *', async () => { // A cada minuto entre 11h00 e 11h59
+    const now = new Date();
+    const hours = now.getHours();
+
+    if (hours === 11) { // Estamos dentro do período das 11h
+        if (!isPlayingMessageBlock) {
+            isPlayingMessageBlock = true;
+            currentMessageBlockIndex = 0; // Reinicia o índice para começar do zero a cada dia
+            console.log('⏰ Bloco de mensagens das 11h-12h ativado por cron.');
+            // Força a atualização do stream para o bloco de mensagens
+            setMainStream();
+        }
+
+        if (messageFilesCache.length === 0) {
+            console.warn('Não há mensagens carregadas do Google Drive para o bloco das 11h.');
+            return;
+        }
+
+        // Se não houver mensagem tocando
+        if (!isPlayingMessage) {
+            const messageToPlay = messageFilesCache[currentMessageBlockIndex];
+            if (messageToPlay) {
+                await playMessage(messageToPlay, true); // O 'true' indica que é uma mensagem de bloco
+                currentMessageBlockIndex = (currentMessageBlockIndex + 1) % messageFilesCache.length; // Próxima mensagem
+            } else {
+                console.warn('Nenhuma mensagem encontrada no índice atual para o bloco das 11h.');
+            }
+        }
+    } else {
+        // Fora do horário das 11h, garante que o bloco esteja desativado
+        if (isPlayingMessageBlock) {
+            console.log('⏰ Bloco de mensagens das 11h-12h desativado por cron.');
+            isPlayingMessageBlock = false;
+            currentMessageBlockIndex = 0;
+            // setMainStream() será chamado pelo cron '* * * * *' para retomar a rádio
+        }
+    }
 });
+// --- FIM NOVO AGENDAMENTO ---
+
 
 // Inicializa a programação ao iniciar o servidor
 setMainStream();
@@ -560,7 +503,7 @@ setupGoogleDrive().then(() => {
 ║  📻 Sábado: Missa Ametista 19h00-20h30              ║
 ║  📻 Sábado: Voz do Pastor 12h50-13h05               ║
 ║  ⏰ Mensagens diárias: 9:55, 12:40, 13:52...         ║
-║  🗣️ Mensagens em sequência: 11h00-12h00 (NOVO!)    ║
+║  🗣️ Bloco de Mensagens: 11h00-12h00 (TODOS OS DIAS) ║
 ╚═════════════════════════════════════════════════════╝
             `);
         });
@@ -572,7 +515,7 @@ setupGoogleDrive().then(() => {
 
 // Função para tocar o stream principal (chamada pelo cliente)
 function playMainStream() {
-    if (!isPlayingMessage && !isPlayingMessageSequence) { // Verifica também a sequência
+    if (!isPlayingMessage) {
         io.emit('play-stream', currentPlayingStream);
     }
 }

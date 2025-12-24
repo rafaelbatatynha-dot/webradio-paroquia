@@ -1,19 +1,21 @@
 {
   "name": "webradio-paroquia",
   "version": "1.0.0",
+  "description": "Web Rádio da Paróquia Auxiliadora de Iraí",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "postinstall": "npm install --prefix ./ffmpeg-static ffmpeg-static"
   },
   "dependencies": {
-    "axios": "^1.13.2",
+    "axios": "^1.7.2",
     "cors": "^2.8.5",
-    "express": "^5.2.1",
-    "http-proxy": "^1.18.1",
-    "node-cron": "^4.2.1",
-    "socket.io": "^4.8.1"
+    "express": "^4.19.2",
+    "googleapis": "^140.0.1",
+    "node-cron": "^3.0.3",
+    "socket.io": "^4.7.5"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+  "devDependencies": {},
+  "author": "Rafael",
+  "license": "ISC"
 }
