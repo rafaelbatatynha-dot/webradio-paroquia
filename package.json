@@ -5,7 +5,6 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
-    // A linha "postinstall" foi removida daqui
   },
   "dependencies": {
     "axios": "^1.7.2",
