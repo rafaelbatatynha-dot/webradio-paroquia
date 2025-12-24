@@ -459,8 +459,9 @@
             pauseButton.disabled = true;
             stopButton.disabled = true;
 
-            // Adicione esta linha para iniciar a rádio automaticamente ao carregar a página
-            playMainStream();
+            // Removido o autoplay direto. O usuário precisará clicar em "Tocar".
+            // Apenas emite o evento para o servidor saber que um cliente conectou
+            socket.emit('get-current-stream');
 
         })();
     </script>
