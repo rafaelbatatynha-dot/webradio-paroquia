@@ -1,61 +1,48 @@
 #!/bin/bash
 
-echo "🚀 Iniciando Icecast + Nginx + Web Radio..."
+echo "🚀 Iniciando Web Rádio Paróquia..."
 
 # Substitui variáveis de ambiente no icecast.xml
-envsubst < /app/icecast.xml.template > /etc/icecast2/icecast.xml
-
-# Inicia Icecast
-echo "📡 Iniciando Icecast..."
-icecast2 -c /etc/icecast2/icecast.xml &
-ICECAST_PID=$!
-
-sleep 5
-
-if ! ps -p $ICECAST_PID > /dev/null; then
-    echo "❌ Erro: Icecast não iniciou"
-    cat /var/log/icecast2/error.log 2>/dev/null || echo "Sem logs"
-    exit 1
+if [ -f "/app/icecast.xml.template" ]; then
+    echo "📡 Configurando Icecast..."
+    envsubst < /app/icecast.xml.template > /etc/icecast2/icecast.xml
 fi
 
-echo "✅ Icecast rodando (PID: $ICECAST_PID)"
+# Inicia Icecast
+if command -v icecast2 &> /dev/null; then
+    echo "📡 Iniciando Icecast..."
+    icecast2 -c /etc/icecast2/icecast.xml &
+    ICECAST_PID=$!
+    sleep 5
+
+    if ps -p $ICECAST_PID > /dev/null; then
+        echo "✅ Icecast rodando (PID: $ICECAST_PID)"
+    else
+        echo "⚠️ Icecast não iniciou, mas continuando..."
+    fi
+else
+    echo "⚠️ Icecast não está instalado, pulando..."
+fi
 
 # Inicia Nginx
-echo "🌐 Iniciando Nginx..."
-nginx -c /app/nginx.conf -g 'daemon off;' &
-NGINX_PID=$!
-
-sleep 3
-
-echo "✅ Nginx rodando (PID: $NGINX_PID)"
-
-# Inicia servidor Node.js
-echo "🎵 Iniciando servidor web da rádio..."
-cd /app
-node server.js &
-NODE_PID=$!
-
-echo "✅ Servidor Node.js rodando (PID: $NODE_PID)"
-
-# Monitora processos
-while true; do
-    if ! ps -p $ICECAST_PID > /dev/null; then
-        echo "⚠️ Icecast parou! Reiniciando..."
-        icecast2 -c /etc/icecast2/icecast.xml &
-        ICECAST_PID=$!
-    fi
-
-    if ! ps -p $NGINX_PID > /dev/null; then
-        echo "⚠️ Nginx parou! Reiniciando..."
+if command -v nginx &> /dev/null; then
+    if [ -f "/app/nginx.conf" ]; then
+        echo "🌐 Iniciando Nginx..."
         nginx -c /app/nginx.conf -g 'daemon off;' &
         NGINX_PID=$!
-    fi
+        sleep 3
 
-    if ! ps -p $NODE_PID > /dev/null; then
-        echo "⚠️ Node.js parou! Reiniciando..."
-        node server.js &
-        NODE_PID=$!
+        if ps -p $NGINX_PID > /dev/null; then
+            echo "✅ Nginx rodando (PID: $NGINX_PID)"
+        else
+            echo "⚠️ Nginx não iniciou, mas continuando..."
+        fi
     fi
+else
+    echo "⚠️ Nginx não está instalado, pulando..."
+fi
 
-    sleep 30
-done
+# Inicia servidor Node.js
+echo "🎵 Iniciando servidor Node.js..."
+cd /app
+exec node server.js
