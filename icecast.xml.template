@@ -1,0 +1,62 @@
+<icecast>
+    <limits>
+        <clients>100</clients>
+        <sources>5</sources>
+        <queue-size>524288</queue-size>
+        <client-timeout>30</client-timeout>
+        <header-timeout>15</header-timeout>
+        <burst-size>65536</burst-size>
+    </limits>
+
+    <authentication>
+        <source-password>${ICECAST_SOURCE_PASSWORD}</source-password>
+        <relay-password>${ICECAST_RELAY_PASSWORD}</relay-password>
+        <admin-user>admin</admin-user>
+        <admin-password>${ICECAST_ADMIN_PASSWORD}</admin-password>
+    </authentication>
+
+    <hostname>${ICECAST_HOSTNAME}</hostname>
+
+    <listen-socket>
+        <port>8000</port>
+        <bind-address>0.0.0.0</bind-address>
+    </listen-socket>
+
+    <paths>
+        <basedir>/usr/share/icecast2</basedir>
+        <logdir>/var/log/icecast2</logdir>
+        <webroot>/usr/share/icecast2/web</webroot>
+        <adminroot>/usr/share/icecast2/admin</adminroot>
+        <pidfile>/var/run/icecast2/icecast2.pid</pidfile>
+    </paths>
+
+    <security>
+        <chroot>0</chroot>
+    </security>
+
+    <!-- Mount point para a missa -->
+    <mount>
+        <mount-name>/missa</mount-name>
+        <stream-name>Missa ao Vivo</stream-name>
+        <stream-description>Transmissão da Missa de Sábado</stream-description>
+        <stream-url>https://${ICECAST_HOSTNAME}</stream-url>
+        <genre>Religious</genre>
+        <type>audio/mpeg</type>
+        <bitrate>128</bitrate>
+        <public>1</public>
+        <fallback-mount>/live</fallback-mount>
+        <fallback-override>1</fallback-override>
+    </mount>
+
+    <!-- Mount point principal -->
+    <mount>
+        <mount-name>/live</mount-name>
+        <stream-name>Rádio Paróquia - Ao Vivo</stream-name>
+        <stream-description>Programação 24 horas</stream-description>
+        <stream-url>https://${ICECAST_HOSTNAME}</stream-url>
+        <genre>Religious</genre>
+        <type>audio/mpeg</type>
+        <bitrate>128</bitrate>
+        <public>1</public>
+    </mount>
+</icecast>
