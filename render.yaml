@@ -4,6 +4,7 @@ services:
     runtime: docker
     plan: free
     region: oregon
+
     healthCheckPath: /health
 
     envVars:
@@ -24,8 +25,3 @@ services:
 
       - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
         sync: false
-
-    disk:
-      name: ffmpeg-cache
-      mountPath: /cache
-      sizeGB: 1
