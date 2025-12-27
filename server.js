@@ -8,6 +8,7 @@ const { google } = require('googleapis');
 const path = require('path');
 const fs = require('fs');
 const url = require('url');
+const { spawn } = require('child_process');  // ✅ NOVO: para iniciar Icecast e Nginx
 
 const app = express();
 const server = http.createServer(app);
@@ -22,33 +23,36 @@ app.use(cors());
 app.use(express.static('public'));
 
 // ===== CONFIGURAÇÃO =====
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;  // ✅ CORRIGIDO: porta 10000 (não 3000)
 const GOOGLE_DRIVE_FOLDER_ID = '1fxtCinZOfb74rWma-nSI_IUNgCSvrUS2';
 
 // Streams de rádio
-    const STREAMS = {
-        'maraba': {
-            url: 'https://streaming.speedrs.com.br/radio/8010/maraba',
-            description: 'Marabá'
-        },
-        'imaculado': {
-            url: 'http://r13.ciclano.io:9033/live',
-            description: 'Voz do Coração Imaculado'
-        },
-        'classica': {
-            url: 'https://stream.srg-ssr.ch/m/rsc_de/mp3_128',
-            description: 'Clássica'
-        },
-        'ametista': {
-            url: 'https://streaming.speedrs.com.br/radio/8010/maraba',
-            description: 'Ametista FM'
-        },
-        'live': {  // ADICIONADO: Stream ao vivo do seu Icecast no Render
-            url: 'http://webradio-paroquia.onrender.com:8000/live',  // Esta é a URL correta do seu Icecast
-            description: 'AO VIVO - Missa'
-        }
-    };
-
+const STREAMS = {
+    'maraba': {
+        url: 'https://streaming.speedrs.com.br/radio/8010/maraba',
+        description: 'Marabá'
+    },
+    'imaculado': {
+        url: 'http://r13.ciclano.io:9033/live',
+        description: 'Voz do Coração Imaculado'
+    },
+    'classica': {
+        url: 'https://stream.srg-ssr.ch/m/rsc_de/mp3_128',
+        description: 'Clássica'
+    },
+    'ametista': {
+        url: 'https://streaming.speedrs.com.br/radio/8010/maraba',
+        description: 'Ametista FM'
+    },
+    'live': {  // ✅ CORRIGIDO: URL interna do Icecast
+        url: 'http://localhost:8000/live',  // ✅ Icecast roda internamente na porta 8000
+        description: 'AO VIVO - Missa'
+    },
+    'missa': {  // ✅ NOVO: mount point específico para a missa
+        url: 'http://localhost:8000/missa',
+        description: 'Missa de Sábado'
+    }
+};
 
 // ===== VARIÁVEIS GLOBAIS =====
 let currentStream = STREAMS.imaculado;
@@ -56,6 +60,68 @@ let messages = [];
 let isPlayingMessage = false;
 let messageTimeout = null;
 let clients = [];
+let icecastProcess = null;  // ✅ NOVO: processo do Icecast
+let nginxProcess = null;    // ✅ NOVO: processo do Nginx
+
+// ===== INICIAR ICECAST =====
+function startIcecast() {
+    try {
+        console.log('📡 Iniciando Icecast...');
+
+        // Substitui variáveis de ambiente no icecast.xml
+        const icecastTemplate = fs.readFileSync('/app/icecast.xml.template', 'utf8');
+        const icecastConfig = icecastTemplate
+            .replace(/\${ICECAST_SOURCE_PASSWORD}/g, process.env.ICECAST_SOURCE_PASSWORD || 'webradio_source_2025')
+            .replace(/\${ICECAST_RELAY_PASSWORD}/g, process.env.ICECAST_RELAY_PASSWORD || 'webradio_relay_2025')
+            .replace(/\${ICECAST_ADMIN_PASSWORD}/g, process.env.ICECAST_ADMIN_PASSWORD || 'webradio_admin_2025')
+            .replace(/\${ICECAST_HOSTNAME}/g, process.env.ICECAST_HOSTNAME || 'webradio-paroquia.onrender.com');
+
+        fs.writeFileSync('/etc/icecast2/icecast.xml', icecastConfig);
+
+        icecastProcess = spawn('icecast2', ['-c', '/etc/icecast2/icecast.xml'], {
+            stdio: 'inherit'
+        });
+
+        icecastProcess.on('error', (err) => {
+            console.error('❌ Erro ao iniciar Icecast:', err.message);
+        });
+
+        icecastProcess.on('exit', (code) => {
+            console.log(`⚠️ Icecast encerrado com código ${code}`);
+            // Reinicia automaticamente após 5 segundos
+            setTimeout(startIcecast, 5000);
+        });
+
+        console.log('✅ Icecast iniciado com sucesso');
+    } catch (error) {
+        console.error('❌ Erro ao iniciar Icecast:', error.message);
+    }
+}
+
+// ===== INICIAR NGINX =====
+function startNginx() {
+    try {
+        console.log('🌐 Iniciando Nginx...');
+
+        nginxProcess = spawn('nginx', ['-c', '/app/nginx.conf', '-g', 'daemon off;'], {
+            stdio: 'inherit'
+        });
+
+        nginxProcess.on('error', (err) => {
+            console.error('❌ Erro ao iniciar Nginx:', err.message);
+        });
+
+        nginxProcess.on('exit', (code) => {
+            console.log(`⚠️ Nginx encerrado com código ${code}`);
+            // Reinicia automaticamente após 5 segundos
+            setTimeout(startNginx, 5000);
+        });
+
+        console.log('✅ Nginx iniciado com sucesso');
+    } catch (error) {
+        console.error('❌ Erro ao iniciar Nginx:', error.message);
+    }
+}
 
 // ===== AUTENTICAÇÃO GOOGLE DRIVE =====
 async function authenticateGoogleDrive() {
@@ -121,7 +187,6 @@ async function playSequentialMessages() {
         console.log('⚠️ Nenhuma mensagem disponível para tocar.');
         return;
     }
-
     isPlayingMessage = true;
     console.log(`📢 Iniciando bloco de ${messages.length} mensagens...`);
     for (let i = 0; i < messages.length; i++) {
@@ -145,7 +210,6 @@ async function playSequentialMessages() {
 // ===== FUNÇÃO PARA TOCAR MENSAGENS A CADA 30 MINUTOS (01:00 - 05:00) =====
 async function playMessageEvery30Minutes() {
     if (messages.length === 0) return;
-
     const randomMessage = messages[Math.floor(Math.random() * messages.length)];
     console.log(`📢 Tocando mensagem aleatória: ${randomMessage.name}`);
     io.emit('play-mensagem', {
@@ -209,6 +273,26 @@ function setupSchedule() {
         });
     });
 
+    // ✅ NOVO: Sábado 19:00 - Muda para stream da missa
+    cron.schedule('0 19 * * 6', () => {
+        console.log('⛪ 19:00 (Sábado) - Mudando para transmissão da Missa');
+        currentStream = STREAMS.missa;
+        io.emit('play-stream', {
+            url: '/stream',
+            description: currentStream.description
+        });
+    });
+
+    // ✅ NOVO: Sábado 20:30 - Retorna para programação normal
+    cron.schedule('30 20 * * 6', () => {
+        console.log('📻 20:30 (Sábado) - Retornando para programação normal');
+        currentStream = STREAMS.imaculado;
+        io.emit('play-stream', {
+            url: '/stream',
+            description: currentStream.description
+        });
+    });
+
     console.log('✅ Agendamento configurado com sucesso');
 }
 
@@ -218,6 +302,7 @@ app.get('/stream', (req, res) => {
         console.log(`🔗 Proxying stream: ${currentStream.url}`);
         const streamUrl = new URL(currentStream.url);
         const client = streamUrl.protocol === 'https:' ? https : http;
+
         const options = {
             hostname: streamUrl.hostname,
             port: streamUrl.port,
@@ -229,6 +314,7 @@ app.get('/stream', (req, res) => {
             },
             timeout: 15000
         };
+
         const request = client.request(options, (streamRes) => {
             res.writeHead(streamRes.statusCode, {
                 'Content-Type': streamRes.headers['content-type'] || 'audio/mpeg',
@@ -245,12 +331,14 @@ app.get('/stream', (req, res) => {
                 }
             });
         });
+
         request.on('error', (err) => {
             console.error('❌ Erro na requisição do stream:', err.message);
             if (!res.headersSent) {
                 res.status(500).send('Erro ao carregar stream');
             }
         });
+
         request.on('timeout', () => {
             console.error('❌ Timeout ao conectar no stream');
             request.destroy();
@@ -258,6 +346,7 @@ app.get('/stream', (req, res) => {
                 res.status(504).send('Timeout ao carregar stream');
             }
         });
+
         request.end();
     } catch (error) {
         console.error('❌ Erro na rota /stream:', error.message);
@@ -265,6 +354,17 @@ app.get('/stream', (req, res) => {
             res.status(500).send('Erro ao carregar stream');
         }
     }
+});
+
+// ✅ NOVO: Rota de health check
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        icecast: icecastProcess ? 'running' : 'stopped',
+        nginx: nginxProcess ? 'running' : 'stopped',
+        messages: messages.length,
+        currentStream: currentStream.description
+    });
 });
 
 // ===== SOCKET.IO =====
@@ -292,6 +392,17 @@ io.on('connection', (socket) => {
 // ===== INICIALIZAÇÃO DO SERVIDOR =====
 async function startServer() {
     try {
+        // ✅ NOVO: Inicia Icecast e Nginx primeiro
+        if (fs.existsSync('/app/icecast.xml.template')) {
+            startIcecast();
+            await new Promise(resolve => setTimeout(resolve, 5000)); // Aguarda 5s
+        }
+
+        if (fs.existsSync('/app/nginx.conf')) {
+            startNginx();
+            await new Promise(resolve => setTimeout(resolve, 3000)); // Aguarda 3s
+        }
+
         await initializeGoogleDrive();
         setupSchedule();
 
@@ -305,6 +416,8 @@ async function startServer() {
             console.log(`║  🎼 Clássica: 00h10-05h00 (msgs a cada 30min)       ║`);
             console.log(`║  ⏰ Bloco de Mensagens: 11h00-12h00 (TODOS OS DIAS) ║`);
             console.log(`║  🗣️ Mensagens noturnas: a cada 30 min (01-05h)     ║`);
+            console.log(`║  ⛪ Missa: Sábado 19h00-20h30                       ║`);
+            console.log(`║  🎙️ Icecast: ${icecastProcess ? 'Ativo' : 'Inativo'}                              ║`);
             console.log(`║  🌐 URL: https://webradio-paroquia.onrender.com     ║`);
             console.log(`║                                                     ║`);
             console.log(`╚═════════════════════════════════════════════════════╝\n`);
@@ -314,5 +427,13 @@ async function startServer() {
         process.exit(1);
     }
 }
+
+// ✅ NOVO: Encerra processos ao fechar o servidor
+process.on('SIGTERM', () => {
+    console.log('⚠️ Encerrando servidor...');
+    if (icecastProcess) icecastProcess.kill();
+    if (nginxProcess) nginxProcess.kill();
+    process.exit(0);
+});
 
 startServer();
