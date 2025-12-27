@@ -1,20 +1,27 @@
 {
   "name": "webradio-paroquia",
-  "version": "1.0.0",
-  "description": "Web Rádio da Paróquia Auxiliadora de Iraí",
+  "version": "2.0.0",
+  "description": "Web Rádio da Paróquia com suporte a YouTube",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
+  "keywords": ["webradio", "streaming", "youtube", "icecast"],
+  "author": "Paróquia",
+  "license": "MIT",
   "dependencies": {
-    "axios": "^1.7.2",
+    "express": "^4.18.2",
+    "socket.io": "^4.6.1",
     "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "googleapis": "^140.0.1",
-    "node-cron": "^3.0.3",
-    "socket.io": "^4.7.5",
+    "node-cron": "^3.0.2",
+    "googleapis": "^118.0.0",
     "ytdl-core": "^4.11.5"
   },
-  "author": "Rafael",
-  "license": "ISC"
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }

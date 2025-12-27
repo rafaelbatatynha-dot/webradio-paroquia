@@ -27,6 +27,9 @@ app.use(express.static('public'));
 const PORT = process.env.PORT || 10000;
 const GOOGLE_DRIVE_FOLDER_ID = '1fxtCinZOfb74rWma-nSI_IUNgCSvrUS2';
 
+// ⚠️ IMPORTANTE: Atualize o ID do vídeo do YouTube quando criar a transmissão
+const YOUTUBE_MISSA_VIDEO_ID = 'SEU_VIDEO_ID_AQUI';  // ✅ TROQUE PELO ID REAL
+
 // Streams de rádio
 const STREAMS = {
     'maraba': {
@@ -42,7 +45,7 @@ const STREAMS = {
         description: 'Clássica'
     },
     'missa': {
-        url: 'https://www.youtube.com/watch?v=SEU_VIDEO_ID_AQUI',  // ✅ COLOQUE O ID DO SEU VÍDEO AQUI
+        url: `https://www.youtube.com/watch?v=${YOUTUBE_MISSA_VIDEO_ID}`,
         description: 'Missa de Sábado'
     }
 };
@@ -50,6 +53,7 @@ const STREAMS = {
 // ===== VARIÁVEIS GLOBAIS =====
 let currentStream = STREAMS.imaculado;
 let messages = [];
+let messagesCache = new Map(); // Cache em RAM
 let isPlayingMessage = false;
 let messageTimeout = null;
 let clients = [];
@@ -220,46 +224,81 @@ app.get('/stream', async (req, res) => {
             console.log("🎥 Extraindo áudio do YouTube:", streamUrl);
 
             try {
+                // Verifica se o vídeo existe e está disponível
+                const info = await ytdl.getInfo(streamUrl);
+                console.log(`✅ Vídeo encontrado: ${info.videoDetails.title}`);
+
                 const audioStream = ytdl(streamUrl, {
                     filter: 'audioonly',
-                    quality: 'highestaudio'
+                    quality: 'highestaudio',
+                    highWaterMark: 1 << 25 // Buffer maior para evitar travamentos
                 });
 
                 res.setHeader('Content-Type', 'audio/mpeg');
                 res.setHeader('Cache-Control', 'no-cache');
                 res.setHeader('Connection', 'keep-alive');
                 res.setHeader('Access-Control-Allow-Origin', '*');
+                res.setHeader('Transfer-Encoding', 'chunked');
 
-                // Converte o áudio para MP3 com FFmpeg
-                const ffmpeg = spawn('ffmpeg', [
-                    '-i', 'pipe:0',
-                    '-f', 'mp3',
-                    '-codec:a', 'libmp3lame',
-                    '-b:a', '128k',
-                    '-content_type', 'audio/mpeg',
-                    'pipe:1'
-                ]);
-
-                audioStream.pipe(ffmpeg.stdin);
-                ffmpeg.stdout.pipe(res);
-
-                ffmpeg.on('error', (err) => {
-                    console.error("❌ Erro FFmpeg:", err.message);
-                    if (!res.headersSent) {
-                        res.status(500).send('Erro ao processar áudio do YouTube');
+                // Verifica se FFmpeg está disponível
+                exec('which ffmpeg', (error, stdout) => {
+                    if (error) {
+                        console.warn('⚠️ FFmpeg não encontrado, enviando áudio direto');
+                        audioStream.pipe(res);
+                        return;
                     }
-                });
 
-                audioStream.on('error', (err) => {
-                    console.error("❌ Erro ytdl-core:", err.message);
-                    if (!res.headersSent) {
-                        res.status(500).send('Erro ao extrair áudio do YouTube');
-                    }
+                    // Converte o áudio para MP3 com FFmpeg
+                    const ffmpeg = spawn('ffmpeg', [
+                        '-i', 'pipe:0',
+                        '-f', 'mp3',
+                        '-codec:a', 'libmp3lame',
+                        '-b:a', '128k',
+                        '-ar', '44100',
+                        '-ac', '2',
+                        '-content_type', 'audio/mpeg',
+                        'pipe:1'
+                    ]);
+
+                    audioStream.pipe(ffmpeg.stdin);
+                    ffmpeg.stdout.pipe(res);
+
+                    ffmpeg.stderr.on('data', (data) => {
+                        // Log silencioso do FFmpeg (apenas para debug)
+                    });
+
+                    ffmpeg.on('error', (err) => {
+                        console.error("❌ Erro FFmpeg:", err.message);
+                        if (!res.headersSent) {
+                            res.status(500).send('Erro ao processar áudio do YouTube');
+                        }
+                    });
+
+                    audioStream.on('error', (err) => {
+                        console.error("❌ Erro ytdl-core:", err.message);
+                        ffmpeg.kill();
+                        if (!res.headersSent) {
+                            res.status(500).send('Erro ao extrair áudio do YouTube');
+                        }
+                    });
+
+                    res.on('close', () => {
+                        console.log('🔌 Cliente desconectou do stream YouTube');
+                        ffmpeg.kill();
+                    });
                 });
 
                 return;
             } catch (ytError) {
                 console.error("❌ Erro ao processar YouTube:", ytError.message);
+
+                // Se o vídeo não estiver disponível, volta para programação normal
+                if (ytError.message.includes('unavailable') || ytError.message.includes('private')) {
+                    console.log('⚠️ Vídeo indisponível, retornando para programação normal');
+                    currentStream = STREAMS.imaculado;
+                    io.emit('play-stream', { url: '/stream', description: currentStream.description });
+                }
+
                 if (!res.headersSent) {
                     res.status(500).send('Erro ao carregar stream do YouTube');
                 }
@@ -323,6 +362,7 @@ app.get('/health', (req, res) => {
         status: 'ok',
         messages: messages.length,
         currentStream: currentStream.description,
+        youtubeVideoId: YOUTUBE_MISSA_VIDEO_ID,
         timestamp: new Date().toISOString()
     });
 });
@@ -333,6 +373,18 @@ app.get('/api/messages', (req, res) => {
         total: messages.length,
         messages: messages
     });
+});
+
+// ===== ROTA PARA ATUALIZAR ID DO YOUTUBE =====
+app.post('/api/update-youtube-id', express.json(), (req, res) => {
+    const { videoId } = req.body;
+    if (!videoId) {
+        return res.status(400).json({ error: 'videoId é obrigatório' });
+    }
+    YOUTUBE_MISSA_VIDEO_ID = videoId;
+    STREAMS.missa.url = `https://www.youtube.com/watch?v=${videoId}`;
+    console.log(`✅ ID do YouTube atualizado: ${videoId}`);
+    res.json({ success: true, videoId });
 });
 
 // ===== SOCKET.IO =====
@@ -368,6 +420,7 @@ async function startServer() {
             console.log(`║  ⏰ Bloco de Mensagens: 11h00-12h00 (TODOS OS DIAS) ║`);
             console.log(`║  🗣️ Mensagens noturnas: a cada 30 min (01-05h)     ║`);
             console.log(`║  ⛪ Missa: Sábado 19h00-20h30 (via YouTube)        ║`);
+            console.log(`║  🎥 YouTube Video ID: ${YOUTUBE_MISSA_VIDEO_ID}    ║`);
             console.log(`║  🌐 URL: https://webradio-paroquia.onrender.com     ║`);
             console.log(`║                                                     ║`);
             console.log(`╚═════════════════════════════════════════════════════╝\n`);
