@@ -1,7 +1,7 @@
 <icecast>
     <limits>
         <clients>100</clients>
-        <sources>2</sources>
+        <sources>5</sources>
         <queue-size>524288</queue-size>
         <client-timeout>30</client-timeout>
         <header-timeout>15</header-timeout>
@@ -9,31 +9,54 @@
     </limits>
 
     <authentication>
-        <source-password>webradio_source_2025</source-password>
-        <relay-password>webradio_relay_2025</relay-password>
+        <source-password>${ICECAST_SOURCE_PASSWORD}</source-password>
+        <relay-password>${ICECAST_RELAY_PASSWORD}</relay-password>
         <admin-user>admin</admin-user>
-        <admin-password>webradio_admin_2025</admin-password>
+        <admin-password>${ICECAST_ADMIN_PASSWORD}</admin-password>
     </authentication>
 
-    <hostname>webradio-paroquia.onrender.com</hostname>
+    <hostname>${ICECAST_HOSTNAME}</hostname>
 
     <listen-socket>
-        <port>80</port>
+        <port>8000</port>
         <bind-address>0.0.0.0</bind-address>
     </listen-socket>
 
-    <files>
+    <paths>
+        <basedir>/usr/share/icecast2</basedir>
         <logdir>/var/log/icecast2</logdir>
         <webroot>/usr/share/icecast2/web</webroot>
         <adminroot>/usr/share/icecast2/admin</adminroot>
         <pidfile>/var/run/icecast2/icecast2.pid</pidfile>
-    </files>
+    </paths>
 
     <security>
         <chroot>0</chroot>
-        <changeowner>
-            <user>icecast</user>
-            <group>icecast</group>
-        </changeowner>
     </security>
+
+    <!-- Mount point para a missa -->
+    <mount>
+        <mount-name>/missa</mount-name>
+        <stream-name>Missa ao Vivo</stream-name>
+        <stream-description>Transmissão da Missa de Sábado</stream-description>
+        <stream-url>https://${ICECAST_HOSTNAME}</stream-url>
+        <genre>Religious</genre>
+        <type>audio/mpeg</type>
+        <bitrate>128</bitrate>
+        <public>1</public>
+        <fallback-mount>/live</fallback-mount>
+        <fallback-override>1</fallback-override>
+    </mount>
+
+    <!-- Mount point principal -->
+    <mount>
+        <mount-name>/live</mount-name>
+        <stream-name>Rádio Paróquia - Ao Vivo</stream-name>
+        <stream-description>Programação 24 horas</stream-description>
+        <stream-url>https://${ICECAST_HOSTNAME}</stream-url>
+        <genre>Religious</genre>
+        <type>audio/mpeg</type>
+        <bitrate>128</bitrate>
+        <public>1</public>
+    </mount>
 </icecast>

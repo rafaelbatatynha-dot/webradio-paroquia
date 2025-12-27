@@ -1,28 +1,31 @@
-# render.yaml
 services:
   - type: web
     name: webradio-paroquia
-    env: node
-    plan: starter
-    buildCommand: |
-      npm install
-      # Baixa e instala FFmpeg e FFprobe estáticos
-      mkdir -p /usr/local/bin
-      wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -O /tmp/ffmpeg.tar.xz
-      tar -xf /tmp/ffmpeg.tar.xz -C /tmp/
-      mv /tmp/ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ffmpeg
-      mv /tmp/ffmpeg-*-amd64-static/ffprobe /usr/local/bin/ffprobe
-      chmod +x /usr/local/bin/ffmpeg
-      chmod +x /usr/local/bin/ffprobe
-      echo "FFmpeg and FFprobe installed successfully."
-    startCommand: node server.js
+    env: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /
+
     envVars:
+      - key: PORT
+        value: 10000
+
+      - key: ICECAST_SOURCE_PASSWORD
+        value: webradio_source_2025
+
+      - key: ICECAST_RELAY_PASSWORD
+        value: webradio_relay_2025
+
+      - key: ICECAST_ADMIN_PASSWORD
+        value: webradio_admin_2025
+
+      - key: ICECAST_HOSTNAME
+        value: webradio-paroquia.onrender.com
+
       - key: NODE_VERSION
         value: 20.x
-      # A variável GOOGLE_APPLICATION_CREDENTIALS_JSON DEVE ser configurada no painel do Render, não aqui.
-      # - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
-      #   value: "SEU_JSON_AQUI" # NÃO COLOQUE AQUI DIRETAMENTE!
+
     disk:
       name: ffmpeg-cache
-      mountPath: /usr/local/bin/ffmpeg # Este disco não será mais usado para o binário, mas pode ser útil para cache.
+      mountPath: /cache
       sizeGB: 1
