@@ -1,10 +1,10 @@
 services:
   - type: web
     name: webradio-paroquia
-    env: docker
+    runtime: docker
     plan: free
     region: oregon
-    healthCheckPath: /
+    healthCheckPath: /health
 
     envVars:
       - key: PORT
@@ -22,8 +22,8 @@ services:
       - key: ICECAST_HOSTNAME
         value: webradio-paroquia.onrender.com
 
-      - key: NODE_VERSION
-        value: 20.x
+      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        sync: false
 
     disk:
       name: ffmpeg-cache
