@@ -17,7 +17,7 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.static('public'));
 
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 const GOOGLE_DRIVE_FOLDER_ID = '1fxtCinZOfb74rWma-nSI_IUNgCSvrUS2';
 const YOUTUBE_MISSA_VIDEO_ID = 'ZlXnuZcaJ2Y';
 
