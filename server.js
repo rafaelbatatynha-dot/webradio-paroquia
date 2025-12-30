@@ -68,7 +68,9 @@ function logBrazilTime(message) {
 async function authenticateGoogleDrive() {
   try {
     const credentialsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-    if (!credentialsJson) throw new Error('GOOGLE_APPLICATION_CREDENTIALS_JSON não encontrada');
+    if (!credentialsJson) {
+      throw new Error('GOOGLE_APPLICATION_CREDENTIALS_JSON não encontrada');
+    }
     const credentials = JSON.parse(credentialsJson);
     const auth = new google.auth.GoogleAuth({
       credentials,
@@ -116,14 +118,12 @@ async function playSequentialMessages() {
   }
   isPlayingMessage = true;
   logBrazilTime(`📢 Iniciando bloco de ${messages.length} mensagens`);
-
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     logBrazilTime(`📢 ${i + 1}/${messages.length}: ${msg.name}`);
     io.emit('play-mensagem', { name: msg.name, url: msg.url });
     await new Promise(res => setTimeout(res, 60000));
   }
-
   logBrazilTime('⏹️ Fim do bloco de mensagens');
   isPlayingMessage = false;
   io.emit('stop-mensagem');
@@ -269,6 +269,7 @@ app.get('/stream', async (req, res) => {
             ffmpeg.kill();
           });
         });
+
         return;
       } catch (ytErr) {
         logBrazilTime(`❌ YouTube: ${ytErr.message}`);
@@ -334,6 +335,10 @@ app.get('/health', (req, res) => {
   });
 });
 
+app.get('/', (req, res) => {
+  res.send('Web Rádio Paróquia - OK');
+});
+
 app.get('/api/messages', (req, res) => {
   res.json({ total: messages.length, messages });
 });
@@ -341,7 +346,9 @@ app.get('/api/messages', (req, res) => {
 io.on('connection', (socket) => {
   logBrazilTime(`✅ Cliente: ${socket.id}`);
   socket.emit('play-stream', { url: '/stream', description: currentStream.description });
+
   socket.on('disconnect', () => logBrazilTime(`❌ Cliente: ${socket.id}`));
+
   socket.on('get-current-stream', () => {
     socket.emit('play-stream', { url: '/stream', description: currentStream.description });
   });
@@ -352,7 +359,7 @@ async function startServer() {
     await initializeGoogleDrive();
     setupSchedule();
 
-    server.listen(PORT, () => {
+    server.listen(PORT, '0.0.0.0', () => {
       const br = getBrazilTime();
       console.log('\n╔═══════════════════════════════════════════╗');
       console.log('║  📡 Servidor iniciado                     ║');
